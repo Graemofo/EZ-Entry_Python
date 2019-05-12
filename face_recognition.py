@@ -10,10 +10,21 @@ import sqlite3
 import os
 import RPi.GPIO as GPIO
 import os
+import threading
 from subprocess import call
-file = open("face_pid.txt","w") 
-file.write(str(os.getpid()))
-file.close()
+#file = open("face_pid.txt","w") 
+#file.write(str(os.getpid()))
+#file.close()
+
+GPIO.setmode(GPIO.BCM)
+
+#LED Set up
+RED_LED = 21
+GREEN_LED = 16
+GPIO.setup(RED_LED, GPIO.OUT)
+GPIO.setup(GREEN_LED, GPIO.OUT)
+
+
 
 current_time_millis = lambda: int(round(time.time() * 1000))
 
@@ -25,6 +36,23 @@ GPIO.setup(17, GPIO.OUT) # output GPIO is set to GPIO pin 17
 
 GPIO.output(17, GPIO.HIGH)
 
+def faceNotRecognizedLights():
+    print("faceNotRecognizedLights started...")
+    GPIO.output(GREEN_LED, False)
+    GPIO.output(RED_LED, True)
+    time.sleep(5)
+    GPIO.output(RED_LED, False)
+    print("faceNotRecognizedLights finished...")
+    return
+
+def faceRecognizedLights():
+    print("faceRecognizedLights started...")
+    GPIO.output(RED_LED, False)
+    GPIO.output(GREEN_LED, True)
+    time.sleep(2)
+    GPIO.output(GREEN_LED, False)
+    print("faceRecognizedLights finished...")
+    return
 
 conn = sqlite3.connect('database.db')
 c = conn.cursor()
@@ -46,7 +74,7 @@ camera.resolution = (640, 480)
 camera.framerate = 18 #32
 #camera.vflip = True
 rawCapture = PiRGBArray(camera, size=(640, 480))
-GPIO.output(17, GPIO.HIGH)
+GPIO.output(17, GPIO.HIGH) # Initialy turn on the relay
  
 # allow the camera to warmup
 time.sleep(0.1)
@@ -58,7 +86,7 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
 
     image = frame.array
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+    faces = face_cascade.detectMultiScale(gray, 1.5, 5)
     
     for (x,y,w,h) in faces:
         cv2.rectangle(image,(x,y),(x+w,y+h),(0,255,0),2)
@@ -68,22 +96,27 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
         c.execute("select name from users where id = (?);", (ids,))
         result = c.fetchall()
         name = result[0][0]
-        if conf < 50:  # If confidence is 30% or more
-            cv2.putText(image, name, (x+2,y-20), cv2.FONT_HERSHEY_DUPLEX, 2, (0,255,0))
-            
-            GPIO.output(17, GPIO.LOW)
-            time.sleep(30)
-            
-            
+        if conf < 60:  # If confidence is 40% or more
+            cv2.putText(image, name, (x+2,y-20), cv2.FONT_HERSHEY_DUPLEX, 1, (0,255,0))
+            cv2.imwrite("live/Visitor.jpg", image)
+            threading.Thread(target=faceRecognizedLights).start()
+            print("Opening door...")
+            GPIO.output(17, GPIO.LOW) #Open Door
+            time.sleep(10)
+            print("closing door...")
+            GPIO.output(17, GPIO.HIGH) 
+            time.sleep(1)
         else:
+            print("faced not recognized...")
             cv2.rectangle(image,(x,y),(x+w,y+h),(0,0,255),2)
             currentTime = current_time_millis()
-            if (currentTime - timeLastImageTaken) > 3000:
+            if (currentTime - timeLastImageTaken) > 7000:
+                print("updating image and showing red light...")
+                threading.Thread(target=faceNotRecognizedLights).start()
                 cv2.imwrite("live/Visitor.jpg", image)
                 exit_code = call("python3 push_notifications.py", shell=True)
                 timeLastImageTaken = currentTime
 
-        GPIO.output(17, GPIO.HIGH)
     cv2.imshow("Frame", image)
     key = cv2.waitKey(1) & 0xFF
  
